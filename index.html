@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>NutriScan</title>
+  <style>
+    body { 
+      font-family: sans-serif; 
+      padding: 20px; 
+      max-width: 800px; 
+      margin: 0 auto;
+      background-color: #f8f9fa;
+    }
+    h1 {
+      color: #2c3e50;
+      margin-bottom: 20px;
+    }
+    #searchInput { 
+      padding: 10px; 
+      width: 300px; 
+      margin-right: 10px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 16px;
+    }
+    button { 
+      padding: 10px 20px;
+      background-color: #3498db;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 16px;
+      transition: background-color 0.3s;
+    }
+    button:hover {
+      background-color: #2980b9;
+    }
+    #results { 
+      margin-top: 20px;
+      background-color: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+    .food-item { 
+      border-bottom: 1px solid #eee; 
+      padding: 15px 20px; 
+      display: flex; 
+      gap: 20px;
+      transition: background-color 0.2s;
+    }
+    .food-item:hover {
+      background-color: #f8f9fa;
+    }
+    .food-item:last-child {
+      border-bottom: none;
+    }
+    .food-image-container {
+      width: 150px;
+      min-width: 150px;
+      height: 150px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      border-radius: 4px;
+      background-color: #f5f5f5;
+    }
+    .food-image {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      transition: filter 0.5s ease-in-out;
+      filter: blur(3px);
+    }
+    .food-image.loaded {
+      filter: blur(0);
+    }
+    .placeholder-image {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #999;
+      font-size: 14px;
+    }
+    .food-info { 
+      flex: 1;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    .food-info strong {
+      font-size: 16px;
+      color: #2c3e50;
+      display: block;
+      margin-bottom: 5px;
+    }
+    .loading-spinner {
+      border: 4px solid rgba(0,0,0,0.1);
+      border-top: 4px solid #3498db;
+      border-radius: 50%;
+      width: 30px;
+      height: 30px;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    .nova-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: bold;
+      margin-top: 5px;
+    }
+    .nova-4 {
+      background-color: #e74c3c;
+      color: white;
+    }
+  </style>
+</head>
+<body>
+  <h1>NutriScan</h1>
+  <input type="text" id="searchInput" placeholder="Enter food name">
+  <button onclick="searchFood()">Search</button>
+  <div id="results"></div>
+
+  <script src="sql-wasm.js"></script>
+  <script>
+    let db;
+
+    initSqlJs({ locateFile: filename => filename }).then(SQL => {
+      fetch("foods_us.db")
+        .then(res => res.arrayBuffer())
+        .then(buffer => {
+          db = new SQL.Database(new Uint8Array(buffer));
+          console.log("Database loaded.");
+        });
+    });
+
+    async function searchFood() {
+      const query = document.getElementById('searchInput').value.trim();
+      const resultsContainer = document.getElementById('results');
+      resultsContainer.innerHTML = '';
+
+      if (!query) {
+        resultsContainer.innerText = 'Please enter a search term.';
+        return;
+      }
+
+      if (!db) {
+        resultsContainer.innerText = 'Database not loaded yet. Please wait...';
+        return;
+      }
+
+      resultsContainer.innerHTML = '<div style="padding: 20px; text-align: center;">Searching...</div>';
+
+      try {
+        const stmt = db.prepare("SELECT * FROM foods WHERE product_name LIKE ? LIMIT 10");
+        const results = [];
+
+        stmt.bind([`%${query}%`]);
+        while (stmt.step()) {
+          results.push(stmt.getAsObject());
+        }
+        stmt.free();
+
+        if (results.length === 0) {
+          resultsContainer.innerHTML = '<div style="padding: 20px; text-align: center;">No results found.</div>';
+          return;
+        }
+
+        resultsContainer.innerHTML = '';
+        
+        for (const item of results) {
+          const div = document.createElement('div');
+          div.className = 'food-item';
+          
+          // Get and clean the barcode
+          let barcode = item.code || '';
+          barcode = barcode.toString().trim().replace(/\D/g, '');
+          
+          // Create image container with loading spinner
+          const imgContainer = document.createElement('div');
+          imgContainer.className = 'food-image-container';
+          const spinner = document.createElement('div');
+          spinner.className = 'loading-spinner';
+          imgContainer.appendChild(spinner);
+          
+          div.appendChild(imgContainer);
+          
+          // Product info
+          const infoDiv = document.createElement('div');
+          infoDiv.className = 'food-info';
+          infoDiv.innerHTML = `
+            <strong>${item.product_name || 'Unknown'}</strong>
+            ${item.nova_group == 4 ? '<span class="nova-badge nova-4">ULTRA-PROCESSED</span>' : ''}
+            Brand: ${item.brands || 'Unknown'}<br>
+            Barcode: ${barcode || 'N/A'}<br>
+            NOVA Group: ${item.nova_group || 'Unknown'}<br>
+            Sugar: ${roundNumber(item.sugars)} g<br>
+            Salt: ${roundNumber(item.salt)} g<br>
+            Fat: ${roundNumber(item.fat)} g<br>
+            Carbs: ${roundNumber(item.carbohydrates)} g<br>
+            Proteins: ${roundNumber(item.proteins)} g<br>
+            Calories: ${roundNumber(item.energy_kcal)} kcal<br>
+            Ingredients: ${item.ingredients_text || 'Not listed'}<br>
+          `;
+          
+          div.appendChild(infoDiv);
+          resultsContainer.appendChild(div);
+          
+          // Fetch image data from API
+          if (barcode.length >= 8) {
+            try {
+              const imageUrl = await fetchImageFromAPI(barcode);
+              if (imageUrl) {
+                const img = document.createElement('img');
+                img.className = 'food-image';
+                img.src = imageUrl;
+                img.onload = function() {
+                  this.classList.add('loaded');
+                };
+                img.onerror = () => img.replaceWith(getPlaceholderImage());
+                imgContainer.replaceChild(img, spinner);
+              } else {
+                imgContainer.replaceChild(getPlaceholderImage(), spinner);
+              }
+            } catch (error) {
+              console.error('Error fetching image:', error);
+              imgContainer.replaceChild(getPlaceholderImage(), spinner);
+            }
+          } else {
+            imgContainer.replaceChild(getPlaceholderImage(), spinner);
+          }
+        }
+      } catch (error) {
+        console.error('Search error:', error);
+        resultsContainer.innerHTML = '<div style="padding: 20px; text-align: center;">An error occurred during search.</div>';
+      }
+    }
+
+    async function fetchImageFromAPI(barcode) {
+      try {
+        const response = await fetch(`https://world.openfoodfacts.org/api/v0/product/${barcode}.json`);
+        const data = await response.json();
+        
+        // Try different image fields in order of preference
+        return data.product?.image_front_small_url || 
+               data.product?.image_front_url ||
+               data.product?.image_url ||
+               null;
+      } catch (error) {
+        console.error('API request failed:', error);
+        return null;
+      }
+    }
+
+    function getPlaceholderImage() {
+      const placeholder = document.createElement('div');
+      placeholder.className = 'placeholder-image';
+      placeholder.innerHTML = 'No image available';
+      return placeholder;
+    }
+
+    function roundNumber(value) {
+      if (!value || isNaN(value)) return 'N/A';
+      const num = parseFloat(value);
+      return Math.round(num * 100) / 100; // Round to 2 decimal places
+    }
+  </script>
+</body>
+</html>
